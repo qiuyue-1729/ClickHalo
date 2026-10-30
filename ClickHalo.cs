@@ -13,7 +13,8 @@ class RingApp : Form {
     [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr msg, IntPtr data);
     [DllImport("kernel32.dll", CharSet=CharSet.Auto)] static extern IntPtr GetModuleHandle(string name);
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
-    HookProc callback; IntPtr hook; ComboBox colors; TrackBar size; Label value; CheckBox enabled, follow; Panel preview; FollowHalo follower;
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    HookProc callback; IntPtr hook; ComboBox colors; TrackBar size; Label value; CheckBox enabled, follow; Panel preview; FollowHalo follower; Timer foregroundTimer; IntPtr lastForeground;
     static readonly Color[] palette = { Color.FromArgb(238,160,32), Color.FromArgb(32,152,215), Color.FromArgb(218,92,112), Color.FromArgb(32,163,125), Color.FromArgb(135,105,209), Color.FromArgb(222,115,54) };
     [STAThread] static void Main() { SetProcessDPIAware(); Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false); Application.Run(new RingApp()); }
     RingApp() {
@@ -30,9 +31,10 @@ class RingApp : Form {
         colors.SelectedIndexChanged += delegate { preview.Invalidate(); if(follower!=null) UpdateFollower(); };
         Controls.Add(new Label { Text="左键、右键和中键点击均可显示；关闭窗口即退出。", AutoSize=true, Location=new Point(24,305), ForeColor=Color.DimGray });
         callback=OnMouse; hook=SetWindowsHookEx(14,callback,GetModuleHandle(null),0); if(hook==IntPtr.Zero) { MessageBox.Show("无法启用鼠标监听，错误代码："+Marshal.GetLastWin32Error(),"鼠标光圈"); Shown += delegate { Close(); }; }
+        foregroundTimer=new Timer { Interval=250 }; foregroundTimer.Tick += delegate { IntPtr foreground=GetForegroundWindow(); if(foreground!=lastForeground) { lastForeground=foreground; if(follower!=null) follower.RaiseOverlay(); } }; foregroundTimer.Start();
         enabled.CheckedChanged += delegate { if(enabled.Checked && follow.Checked) follow.Checked=false; };
         follow.CheckedChanged += delegate { if(follow.Checked) { if(enabled.Checked) enabled.Checked=false; UpdateFollower(); } else if(follower!=null) { follower.Close(); follower=null; } };
-        FormClosed += delegate { if(follower!=null) follower.Close(); if(hook!=IntPtr.Zero) UnhookWindowsHookEx(hook); };
+        FormClosed += delegate { foregroundTimer.Stop(); foregroundTimer.Dispose(); if(follower!=null) follower.Close(); if(hook!=IntPtr.Zero) UnhookWindowsHookEx(hook); };
     }
     void UpdateFollower() {
         if(follower==null || follower.IsDisposed) { follower=new FollowHalo(); follower.Show(); }
@@ -84,7 +86,8 @@ class FollowHalo : Form {
     protected override CreateParams CreateParams { get { var p=base.CreateParams; p.ExStyle |= 0x20 | 0x80 | 0x08000000; return p; } }
     public FollowHalo() { FormBorderStyle=FormBorderStyle.None; ShowInTaskbar=false; TopMost=true; StartPosition=FormStartPosition.Manual; BackColor=Color.Magenta; TransparencyKey=Color.Magenta; Opacity=0.30; DoubleBuffered=true; }
     public void UpdateHalo(Point point, int d, Color c) { int extent=d+8; bool changed=diameter!=d || color!=c; diameter=d; color=c; Bounds=new Rectangle(point.X-extent/2,point.Y-extent/2,extent,extent); lastX=point.X; lastY=point.Y; if(changed) Invalidate(); }
-    public void MoveTo(int x, int y) { if(x==lastX && y==lastY) return; lastX=x; lastY=y; int offset=(diameter+8)/2; SetWindowPos(Handle,IntPtr.Zero,x-offset,y-offset,0,0,0x0001 | 0x0004 | 0x0010); }
+    public void MoveTo(int x, int y) { if(x==lastX && y==lastY) return; lastX=x; lastY=y; int offset=(diameter+8)/2; SetWindowPos(Handle,new IntPtr(-1),x-offset,y-offset,0,0,0x0001 | 0x0010); }
+    public void RaiseOverlay() { if(IsHandleCreated && Visible) SetWindowPos(Handle,new IntPtr(-1),0,0,0,0,0x0001 | 0x0002 | 0x0010); }
     protected override void OnPaint(PaintEventArgs e) { base.OnPaint(e); e.Graphics.SmoothingMode=SmoothingMode.AntiAlias; float x=(ClientSize.Width-diameter)/2f, y=(ClientSize.Height-diameter)/2f; using(var brush=new SolidBrush(color)) e.Graphics.FillEllipse(brush,x,y,diameter,diameter); }
 }
 
